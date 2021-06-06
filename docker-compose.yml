@@ -1,0 +1,65 @@
+version: "3.9"
+services:
+    mongo:
+        image: mongo:latest
+        restart: always
+        ports:
+          - 27017:27017
+        environment:
+          - MONGO_INITDB_ROOT_USERNAME=root
+          - MONGO_INITDB_ROOT_PASSWORD=password
+          - MONGO_INITDB_DATABASE=admin
+        volumes:
+          - ./application_configs/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+            
+    mongo-express:
+        image: mongo-express
+        environment:
+          - ME_CONFIG_MONGODB_ENABLE_ADMIN=true
+          - ME_CONFIG_MONGODB_AUTH_DATABASE=admin
+          - ME_CONFIG_MONGODB_ADMINUSERNAME=root
+          - ME_CONFIG_MONGODB_ADMINPASSWORD=password
+        ports:
+          - 8081:8081
+        depends_on: 
+          - mongo
+        restart: on-failure
+          
+    minio:
+      image: minio/minio
+      environment: 
+        - MINIO_ACCESS_KEY=minio
+        - MINIO_SECRET_KEY=minio123 
+      ports:
+        - 9000:9000
+      volumes: 
+        - /home/rahul/minio/:/data
+      command: server /data
+
+    mc:
+        image: minio/mc:latest
+        depends_on:
+        - minio
+        - rabbitmq
+        entrypoint: >
+          /bin/sh -c "
+          /usr/bin/mc alias set myminio http://minio:9000 minio minio123;
+          /usr/bin/mc admin config get myminio/ notify_amqp;
+          /usr/bin/mc admin config set myminio/ notify_amqp:1 exchange="bucketevents" exchange_type="fanout" mandatory="false" no_wait="false"  url="amqp://user:password@rabbitmq:5672" auto_deleted="false" delivery_mode="0" durable="false" internal="false" routing_key="bucketlogs";
+          /usr/bin/mc mb myminio/images;
+          /usr/bin/mc event add myminio/images arn:minio:sqs::1:amqp --suffix .jpg;
+          /usr/bin/mc event list myminio/images;
+          "
+        restart: on-failure
+
+    rabbitmq:
+      image: rabbitmq:3-management-alpine
+      ports:
+          - 5672:5672
+          - 15672:15672
+      environment: 
+        - RABBITMQ_DEFAULT_USER=user
+        - RABBITMQ_DEFAULT_PASS=password
+      volumes:
+          - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+          - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
